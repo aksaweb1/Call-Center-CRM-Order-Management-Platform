@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+.next/
+out/
+
+# Env & secrets — never commit real credentials
+.env
+.env.local
+.env.*.local
+
+# Local business data (customer PII) — not for source control
+data/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+logs/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# Test / coverage artifacts
+coverage/
+.nyc_output/
+
+# Tooling caches
+.eslintcache
+*.tsbuildinfo

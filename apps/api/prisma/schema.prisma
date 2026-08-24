@@ -1,0 +1,837 @@
+// Prisma schema — Call Center CRM & Order Management Platform
+// doc: https://pris.ly/d/prisma-schema
+// Datasource: PostgreSQL, UUID PKs, soft deletes, enums, indexes
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum RoleType {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  TEAM_LEADER
+  AGENT
+  QA
+  DISPATCHER
+  FINANCE
+  SUPPORT
+  DELIVERY
+  VIEWER
+}
+
+enum CallOutcome {
+  CONNECTED
+  NO_ANSWER
+  BUSY
+  WRONG_NUMBER
+  INTERESTED
+  NOT_INTERESTED
+  CALL_BACK_REQUESTED
+  ORDER_CONFIRMED
+}
+
+enum LeadStatus {
+  NEW
+  ASSIGNED
+  CALLING
+  INTERESTED
+  NO_ANSWER
+  BUSY
+  WRONG_NUMBER
+  CALL_BACK_REQUESTED
+  NOT_INTERESTED
+  ORDER_CREATED
+  CONVERTED
+  CANCELLED
+  INVALID_NUMBER
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum AssignmentStrategy {
+  MANUAL
+  ROUND_ROBIN
+  LEAST_BUSY
+  SKILL_BASED
+  LANGUAGE_BASED
+  LOCATION_BASED
+  VIP_QUEUE
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  CONNECTED
+  COMPLETED
+  BUSY
+  FAILED
+  MISSED
+}
+
+enum RecordingStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  DISPATCHED
+  DELIVERED
+  RETURNED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  NET_BANKING
+  COD
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum NotificationType {
+  PUSH
+  EMAIL
+  SMS
+  WHATSAPP
+  SYSTEM
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  LOGIN
+  LOGOUT
+  ASSIGN
+  TRANSITION
+  OTHER
+}
+
+enum ShipmentStatus {
+  PENDING
+  PICKED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_DELIVERY
+  RETURNED
+}
+
+enum ActivityEntityType {
+  CUSTOMER
+  LEAD
+  ORDER
+  CALL
+  FOLLOW_UP
+  PAYMENT
+  NOTE
+  USER
+  PRODUCT
+  INVOICE
+  SHIPMENT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUTH: USERS, ROLES, PERMISSIONS
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  phone        String    @unique
+  fullName     String
+  avatarUrl    String?
+  passwordHash String
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  teamId       String?   @db.Uuid
+  team         Team?     @relation(fields: [teamId], references: [id])
+  roleId       String    @db.Uuid
+  role         Role      @relation(fields: [roleId], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  leads         Lead[]          @relation("LeadAssignee")
+  calls         Call[]          @relation("CallAgent")
+  followUps     FollowUp[]      @relation("FollowUpAgent")
+  orders        Order[]         @relation("OrderAgent")
+  notes         Note[]
+  activities    Activity[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  attachments   Attachment[]
+  Customer      Customer[]
+  StockMovement StockMovement[]
+  Payment       Payment[]
+  notifications Notification[]
+  pushTokens    PushToken[]
+  permissionOverrides PermissionOverride[]
+
+  @@index([teamId])
+  @@index([roleId])
+  @@index([email])
+  @@index([phone])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  key         String           @unique // e.g. "AGENT"
+  description String?
+  isSystem    Boolean          @default(false)
+  permissions RolePermission[]
+  users       User[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+}
+
+model Permission {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique // e.g. "order.create"
+  name      String
+  module    String
+  createdAt DateTime @default(now())
+
+  roles    RolePermission[]
+  overrides PermissionOverride[]
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+// Per-user permission overrides. Lets a super admin grant a permission the
+// user's role doesn't include (granted=true) or revoke one the role gives
+// (granted=false), on top of the role's base permission set.
+// SUPER_ADMIN stays implicitly all-powerful regardless of overrides.
+model PermissionOverride {
+  userId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  granted      Boolean    @default(true)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@id([userId, permissionId])
+  @@index([permissionId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// ORGANIZATION & TEAMS
+// ─────────────────────────────────────────────────────────────
+
+model Team {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  code      String    @unique
+  location  String?
+  members   User[]
+  leads     Lead[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+// ─────────────────────────────────────────────────────────────
+// CUSTOMERS & ADDRESSES
+// ─────────────────────────────────────────────────────────────
+
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  name           String
+  phone          String
+  alternatePhone String?
+  email          String?
+  gst            String?
+  company        String?
+  dob            DateTime?
+  customerType   CustomerType @default(INDIVIDUAL)
+  tags           String[]     @default([])
+  city           String?
+  state          String?
+  country        String?
+  pincode        String?
+  latitude       Decimal?
+  longitude      Decimal?
+  metadata       Json?
+  createdById    String?      @db.Uuid
+  createdBy      User?        @relation(fields: [createdById], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  addresses Address[]
+  leads     Lead[]
+  orders    Order[]
+  calls     Call[]
+  followUps FollowUp[]
+  notes     Note[]
+  timeline  Activity[]
+
+  @@index([phone])
+  @@index([email])
+  @@index([name])
+  @@index([createdById])
+}
+
+model Address {
+  id         String    @id @default(uuid()) @db.Uuid
+  customerId String    @db.Uuid
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String?
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  country    String    @default("IN")
+  pincode    String
+  latitude   Decimal?
+  longitude  Decimal?
+  isDefault  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([customerId])
+  @@index([pincode])
+}
+
+// ─────────────────────────────────────────────────────────────
+// LEADS / LEAD SOURCES / TAGS / ASSIGNMENT
+// ─────────────────────────────────────────────────────────────
+
+model Lead {
+  id               String       @id @default(uuid()) @db.Uuid
+  customerId       String       @db.Uuid
+  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  agentId          String?      @db.Uuid
+  agent            User?        @relation("LeadAssignee", fields: [agentId], references: [id])
+  teamId           String?      @db.Uuid
+  team             Team?        @relation(fields: [teamId], references: [id])
+  status           LeadStatus   @default(NEW)
+  priority         LeadPriority @default(MEDIUM)
+  sourceId         String?      @db.Uuid
+  sourceRef        LeadSource?  @relation(fields: [sourceId], references: [id])
+  tags             LeadTag[]    @relation("LeadToTags")
+  title            String?
+  description      String?
+  assignedAt       DateTime?
+  firstCallMadeAt  DateTime?
+  convertedOrderId String?      @unique @db.Uuid
+  convertedAt      DateTime?
+  lastActivityAt   DateTime?
+  metadata         Json?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
+
+  calls     Call[]
+  followUps FollowUp[]
+  orders    Order[]
+  timeline  Activity[]
+  notes     Note[]
+
+  convertedOrder Order? @relation("LeadConvertedOrder", fields: [convertedOrderId], references: [id])
+
+  @@index([customerId])
+  @@index([agentId])
+  @@index([status])
+  @@index([priority])
+  @@index([sourceId])
+  @@index([assignedAt])
+}
+
+model LeadSource {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String // Facebook, Instagram, Website, WhatsApp, Google Ads, Organic, Referral, Marketplace, Manual Import, CSV Import
+  code      String    @unique
+  isActive  Boolean   @default(true)
+  leads     Lead[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model LeadTag {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  color     String?
+  leads     Lead[]   @relation("LeadToTags")
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// PRODUCTS / CATEGORIES / INVENTORY
+// ─────────────────────────────────────────────────────────────
+
+model Category {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String     @unique
+  description String?
+  isActive    Boolean    @default(true)
+  parentId    String?    @db.Uuid
+  parent      Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryTree")
+  products    Product[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+}
+
+model Product {
+  id          String    @id @default(uuid()) @db.Uuid
+  categoryId  String?   @db.Uuid
+  category    Category? @relation(fields: [categoryId], references: [id])
+  sku         String    @unique
+  name        String
+  description String?
+  price       Decimal   @db.Decimal(12, 2)
+  discount    Decimal?  @default(0) @db.Decimal(12, 2)
+  gstRate     Decimal   @default(18) @db.Decimal(5, 2)
+  imageUrls   String[]  @default([])
+  isActive    Boolean   @default(true)
+  stock       Int       @default(0)
+  lowStockAt  Int       @default(10)
+  variants    Json? // e.g. [{ "name": "Size", "options": ["S","M"] }]
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  stockMovements StockMovement[]
+  orderItems     OrderItem[]
+
+  @@index([categoryId])
+  @@index([sku])
+  @@index([name])
+}
+
+model StockMovement {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int // +positive inbound, -negative outbound
+  reason    String
+  reference String?
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// ORDERS / ITEMS / PAYMENTS / INVOICES / SHIPMENTS
+// ─────────────────────────────────────────────────────────────
+
+model Order {
+  id              String        @id @default(uuid()) @db.Uuid
+  orderNumber     String        @unique
+  customerId      String        @db.Uuid
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  agentId         String?       @db.Uuid
+  agent           User?         @relation("OrderAgent", fields: [agentId], references: [id])
+  leadId          String?       @db.Uuid
+  lead            Lead?         @relation(fields: [leadId], references: [id])
+  status          OrderStatus   @default(PENDING)
+  paymentStatus   PaymentStatus @default(PENDING)
+  itemsTotal      Decimal       @default(0) @db.Decimal(12, 2)
+  discount        Decimal       @default(0) @db.Decimal(12, 2)
+  gstTotal        Decimal       @default(0) @db.Decimal(12, 2)
+  shippingCharges Decimal       @default(0) @db.Decimal(12, 2)
+  couponCode      String?
+  total           Decimal       @default(0) @db.Decimal(12, 2)
+  billingAddress  Json?
+  shippingAddress Json?
+  notes           String?
+  placedAt        DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+
+  items    OrderItem[]
+  payments Payment[]
+  invoice  OrderInvoice?
+  shipment OrderShipment?
+  timeline Activity[]
+
+  leadConverted   Lead?  @relation("LeadConvertedOrder")
+
+  @@index([customerId])
+  @@index([agentId])
+  @@index([status])
+  @@index([orderNumber])
+  @@index([placedAt])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  orderId   String  @db.Uuid
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int     @default(1)
+  unitPrice Decimal @db.Decimal(12, 2)
+  discount  Decimal @default(0) @db.Decimal(12, 2)
+  gstRate   Decimal @default(18) @db.Decimal(5, 2)
+  lineTotal Decimal @db.Decimal(12, 2)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  orderId       String?       @db.Uuid
+  order         Order?        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  transactionId String?
+  currency      String        @default("INR")
+  receivedById  String?       @db.Uuid
+  receivedBy    User?         @relation(fields: [receivedById], references: [id])
+  paidAt        DateTime?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  @@index([orderId])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
+model OrderInvoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  invoiceNumber String        @unique
+  orderId       String        @unique @db.Uuid
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status        InvoiceStatus @default(ISSUED)
+  totalAmount   Decimal       @db.Decimal(12, 2)
+  gstBreakup    Json?
+  issuedAt      DateTime      @default(now())
+  dueAt         DateTime?
+  paidAt        DateTime?
+  pdfUrl        String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+}
+
+model OrderShipment {
+  id          String         @id @default(uuid()) @db.Uuid
+  orderId     String         @unique @db.Uuid
+  order       Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierName String?
+  trackingId  String?
+  status      ShipmentStatus @default(PICKED)
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+  address     Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+
+  @@index([trackingId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// CALLS / RECORDINGS / WEBHOOK EVENTS
+// ─────────────────────────────────────────────────────────────
+
+model Call {
+  id             String        @id @default(uuid()) @db.Uuid
+  callSid        String?       @unique
+  provider       String        @default("EXOTEL") // EXOTEL | TWILIO | KNOWLARITY
+  leadId         String?       @db.Uuid
+  lead           Lead?         @relation(fields: [leadId], references: [id])
+  customerId     String        @db.Uuid
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  agentId        String?       @db.Uuid
+  agent          User?         @relation("CallAgent", fields: [agentId], references: [id])
+  direction      CallDirection
+  status         CallStatus
+  outcome        CallOutcome?
+  durationSecs   Int?
+  dialedNumber   String
+  startedAt      DateTime      @default(now())
+  completedAt    DateTime?
+  providerCallId String?
+  recordingId    String        @db.Uuid
+  recording      CallRecording @relation(fields: [recordingId], references: [id])
+  notes          String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  events CallEvent[]
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([agentId])
+  @@index([startedAt])
+  @@index([status])
+}
+
+model CallRecording {
+  id           String          @id @default(uuid()) @db.Uuid
+  recordingUrl String?
+  durationSecs Int?
+  status       RecordingStatus @default(PENDING)
+  call         Call[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model CallEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  callId    String   @db.Uuid
+  call      Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  eventType String // initiated | ringing | connected | completed | busy | failed | missed | recording_ready
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([callId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// FOLLOW-UPS, NOTES, ATTACHMENTS
+// ─────────────────────────────────────────────────────────────
+
+model FollowUp {
+  id           String     @id @default(uuid()) @db.Uuid
+  leadId       String?    @db.Uuid
+  lead         Lead?      @relation(fields: [leadId], references: [id])
+  customerId   String     @db.Uuid
+  customer     Customer   @relation(fields: [customerId], references: [id])
+  agentId      String?    @db.Uuid
+  agent        User?      @relation("FollowUpAgent", fields: [agentId], references: [id])
+  scheduledFor DateTime   @db.Timestamptz(3)
+  completedAt  DateTime?
+  isDone       Boolean    @default(false)
+  title        String?
+  description  String?
+  reminders    DateTime[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  timeline Activity[]
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([agentId])
+  @@index([scheduledFor])
+  @@index([isDone])
+}
+
+// ─────────────────────────────────────────────────────────────
+// NOTES + ATTACHMENTS
+// ─────────────────────────────────────────────────────────────
+
+model Note {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id])
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  leadId     String?   @db.Uuid
+  lead       Lead?     @relation(fields: [leadId], references: [id])
+  body       String
+  pinned     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([customerId])
+  @@index([leadId])
+  @@index([userId])
+}
+
+model Attachment {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id])
+  leadId     String?   @db.Uuid
+  customerId String?   @db.Uuid
+  filename   String
+  mimeType   String
+  size       Int
+  url        String
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  @@index([leadId])
+  @@index([customerId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// TIMELINE / ACTIVITY / AUDIT
+// ─────────────────────────────────────────────────────────────
+
+model Activity {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String?   @db.Uuid
+  user       User?     @relation(fields: [userId], references: [id])
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  leadId     String?   @db.Uuid
+  lead       Lead?     @relation(fields: [leadId], references: [id])
+  orderId    String?   @db.Uuid
+  order      Order?    @relation(fields: [orderId], references: [id])
+  entityKind String    @default("OTHER")
+  action     String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+  FollowUp   FollowUp? @relation(fields: [followUpId], references: [id])
+  followUpId String?   @db.Uuid
+
+  @@index([customerId])
+  @@index([leadId])
+  @@index([orderId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id])
+  action    AuditAction @default(OTHER)
+  entity    String
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  userAgent String?
+  reason    String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// NOTIFICATIONS & PUSH TOKENS
+// ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    @default("SYSTEM")
+  title     String
+  body      String
+  entity    String?
+  entityId  String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  @@index([userId])
+  @@index([readAt])
+  @@index([createdAt])
+}
+
+model PushToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  provider  String   @default("fcm")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  value       Json
+  description String?
+  isSecret    Boolean  @default(false)
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}

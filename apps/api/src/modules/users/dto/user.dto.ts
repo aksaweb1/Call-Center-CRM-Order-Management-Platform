@@ -1,0 +1,76 @@
+import {
+  IsArray,
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator';
+
+export class CreateUserDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @Length(4, 20)
+  phone!: string;
+
+  @IsString()
+  @Length(1, 120)
+  fullName!: string;
+
+  @IsString()
+  @Length(8, 128)
+  password!: string;
+
+  @IsString()
+  roleKey!: string;
+
+  @IsOptional()
+  @IsString()
+  teamId?: string;
+
+  @IsOptional()
+  avatarUrl?: string;
+}
+
+export class UpdateUserDto {
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(4, 20)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(3, 120)
+  fullName?: string;
+
+  @IsOptional()
+  @IsString()
+  roleKey?: string;
+
+  @IsOptional()
+  @IsString()
+  teamId?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string;
+
+  @IsOptional()
+  isActive?: boolean;
+}
+
+export class SetUserPermissionsDto {
+  @IsArray()
+  @IsString({ each: true })
+  granted!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  revoked!: string[];
+}
