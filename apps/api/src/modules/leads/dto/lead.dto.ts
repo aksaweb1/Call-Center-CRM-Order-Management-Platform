@@ -6,6 +6,7 @@ import {
   IsUUID,
   Length,
 } from 'class-validator';
+import { LeadStatus } from '@prisma/client';
 
 export enum CreateLeadStatus {
   NEW = 'NEW',
@@ -115,6 +116,15 @@ export class AssignManyLeadsDto {
 
   @IsUUID()
   agentId!: string;
+}
+
+export class BulkLeadStatusDto {
+  @IsArray()
+  @IsUUID('4', { each: true })
+  leadIds!: string[];
+
+  @IsEnum(LeadStatus)
+  status!: LeadStatus;
 }
 
 export class BulkImportLeadDto {

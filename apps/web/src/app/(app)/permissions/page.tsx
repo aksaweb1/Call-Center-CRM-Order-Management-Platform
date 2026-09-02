@@ -22,6 +22,8 @@ export default function PermissionsPage() {
 
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [overrides, setOverrides] = useState<Record<string, TriState>>({});
+  // Last saved tri-state map — used to detect unsaved changes.
+  const [savedOverrides, setSavedOverrides] = useState<Record<string, TriState>>({});
   const [details, setDetails] = useState<UserEffectivePermissions | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,6 +33,16 @@ export default function PermissionsPage() {
   const boxRef = useRef<HTMLDivElement>(null);
 
   const allUsers = useMemo(() => users.data?.items ?? [], [users.data]);
+
+  // Unsaved changes exist when the current selection differs from the last
+  // saved tri-state map.
+  const isDirty = useMemo(() => {
+    const keys = new Set([...Object.keys(overrides), ...Object.keys(savedOverrides)]);
+    for (const k of keys) {
+      if ((overrides[k] ?? 'default') !== (savedOverrides[k] ?? 'default')) return true;
+    }
+    return false;
+  }, [overrides, savedOverrides]);
 
   const selectableUsers = useMemo(
     () => allUsers.filter((u) => u.role?.key !== 'SUPER_ADMIN'),
@@ -60,8 +72,10 @@ export default function PermissionsPage() {
     setMessage('');
     try {
       const d = await api<UserEffectivePermissions>(`/users/${userId}/permissions`);
+      const base = computeTriStates(d);
       setDetails(d);
-      setOverrides(computeTriStates(d));
+      setOverrides(base);
+      setSavedOverrides(base);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Could not load permissions');
     } finally {
@@ -108,8 +122,10 @@ export default function PermissionsPage() {
             .map(([k]) => k),
         }),
       });
+      const base = computeTriStates(d);
       setDetails(d);
-      setOverrides(computeTriStates(d));
+      setOverrides(base);
+      setSavedOverrides(base);
       setMessage('Permissions saved. The change applies on the next login / token refresh.');
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Could not save permissions');
@@ -203,10 +219,11 @@ export default function PermissionsPage() {
             </h2>
             <button
               onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              disabled={saving || !isDirty}
+              title={isDirty ? 'Save permission changes' : 'No changes to save'}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {saving ? 'Saving…' : 'Save changes'}
+              {saving ? 'Saving…' : isDirty ? 'Save changes' : 'Saved'}
             </button>
           </div>
           <div className="divide-y divide-slate-100">

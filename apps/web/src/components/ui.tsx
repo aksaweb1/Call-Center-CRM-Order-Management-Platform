@@ -3,23 +3,35 @@ export function Card({
   value,
   icon,
   accent = 'bg-blue-50 text-blue-600',
+  href,
 }: {
   title: string;
   value: string;
   icon?: React.ReactNode;
   accent?: string;
+  href?: string;
 }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+  const inner = (
+    <>
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-slate-500">{title}</p>
-        {icon && (
-          <span className={`rounded-lg p-2 ${accent}`}>{icon}</span>
-        )}
+        {icon && <span className={`rounded-lg p-2 ${accent}`}>{icon}</span>}
       </div>
       <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
-    </div>
+      {href && <span className="mt-2 inline-block text-xs font-medium text-blue-600">View →</span>}
+    </>
   );
+  if (href) {
+    return (
+      <a
+        href={href}
+        className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow"
+      >
+        {inner}
+      </a>
+    );
+  }
+  return <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">{inner}</div>;
 }
 
 export function Badge({ children, tone = 'slate' }: { children: React.ReactNode; tone?: string }) {
@@ -43,6 +55,20 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
     <div className="flex items-center justify-center py-12 text-sm text-slate-500">
       <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
       {label}
+    </div>
+  );
+}
+
+export function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: number }) {
+  return (
+    <div className="animate-pulse space-y-3 p-4">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex gap-3">
+          {Array.from({ length: cols }).map((_, j) => (
+            <div key={j} className="h-4 flex-1 rounded bg-slate-200" style={{ opacity: 1 - j * 0.08 }} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

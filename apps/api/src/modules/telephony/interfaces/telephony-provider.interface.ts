@@ -42,6 +42,15 @@ export interface WebhookCallContext extends WebhookCallEvent {
 
 export type TelephonyProviders = 'EXOTEL' | 'TWILIO' | 'KNOWLARITY' | 'TATA';
 
+export interface TelephonyAccount {
+  id: string;
+  name: string;
+  number: string;
+  type: 'MOBILE' | 'WEB_DIALER' | 'DID' | 'AGENT';
+  status?: string;
+  raw?: unknown;
+}
+
 export interface TelephonyProvider {
   readonly name: TelephonyProviders;
 
@@ -59,6 +68,9 @@ export interface TelephonyProvider {
 
   /** Fetch currently live calls */
   liveCalls?(): Promise<unknown[]>;
+
+  /** List available telephony accounts / agents that can be assigned to CRM users (TATA: Smartflow agents/DIDs) */
+  listAccounts?(): Promise<TelephonyAccount[]>;
 
   /** Normalize an incoming webhook payload into a domain event. */
   parseWebhook(payload: Record<string, unknown>): WebhookCallContext;

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/lib/hook';
 import { useAuth } from '@/lib/auth';
-import { PageResult, User } from '@/lib/types';
+import { PageResult, TelephonyAccount, User } from '@/lib/types';
 import { Badge, EmptyState, Spinner } from '@/components/ui';
 import { api } from '@/lib/client';
 
@@ -39,11 +39,14 @@ const emptyForm = {
   password: '',
   role: 'AGENT',
   teamId: '',
+  callDevice: 'MOBILE' as 'MOBILE' | 'WEB_DIALER',
+  telephonyAccountId: '',
 };
 
 export default function UsersPage() {
   const { user } = useAuth();
   const users = useApi<PageResult<User>>('/users?limit=100');
+  const tataAccounts = useApi<TelephonyAccount[]>('/telephony/accounts');
 
   const [form, setForm] = useState(emptyForm);
   const [creating, setCreating] = useState(false);
@@ -53,6 +56,9 @@ export default function UsersPage() {
     roleKey: string;
     teamId: string;
     isActive: boolean;
+    phone: string;
+    callDevice: 'MOBILE' | 'WEB_DIALER';
+    telephonyAccountId: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -85,6 +91,9 @@ export default function UsersPage() {
       roleKey: u.role?.key ?? 'AGENT',
       teamId: u.team?.id ?? '',
       isActive: u.isActive ?? true,
+      phone: u.phone ?? '',
+      callDevice: (u.callDevice as 'MOBILE' | 'WEB_DIALER') ?? 'MOBILE',
+      telephonyAccountId: u.telephonyAccountId ?? '',
     });
   }
 
@@ -108,10 +117,17 @@ export default function UsersPage() {
           password: form.password,
           roleKey: form.role,
           teamId: form.teamId || undefined,
+          callDevice: form.callDevice,
+          telephonyAccountId: form.telephonyAccountId || undefined,
         }),
       });
+      const assigned = form.telephonyAccountId
+        ? ` — bound to Tata ${form.telephonyAccountId}`
+        : form.callDevice === 'WEB_DIALER'
+          ? ' — Web dialer'
+          : ` — Mobile ${form.phone}`;
       setForm(emptyForm);
-      setMessage(`Agent ${form.fullName} added. They start with the role permission set — open Permissions to customise.`);
+      setMessage(`Agent ${form.fullName} added${assigned}.`);
       users.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not add agent');
@@ -130,12 +146,15 @@ export default function UsersPage() {
         method: 'PATCH',
         body: JSON.stringify({
           fullName: editForm.fullName,
+          phone: editForm.phone.trim() || undefined,
           roleKey: editForm.roleKey,
           teamId: editForm.teamId || undefined,
           isActive: editForm.isActive,
+          callDevice: editForm.callDevice,
+          telephonyAccountId: editForm.telephonyAccountId || null,
         }),
       });
-      setMessage('Changes saved.');
+      setMessage('Changes saved — calls for this user will now ring on the assigned account.');
       cancelEdit();
       users.reload();
     } catch (e) {
@@ -159,8 +178,8 @@ export default function UsersPage() {
     }
   }
 
-  if (user?.role !== 'SUPER_ADMIN') {
-    return <EmptyState title="Access denied" description="Only the SUPER_ADMIN can manage employees." />;
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(user?.role ?? '')) {
+    return <EmptyState title="Access denied" description="Only SUPER_ADMIN or ADMIN can manage employees." />;
   }
 
   if (users.loading) return <Spinner />;
@@ -250,6 +269,37 @@ export default function UsersPage() {
             </select>
           </div>
           <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Call source</label>
+            <select
+              value={form.callDevice}
+              onChange={(e) => setForm({ ...form, callDevice: e.target.value as 'MOBILE' | 'WEB_DIALER' })}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="MOBILE">Mobile — agent gets call on phone</option>
+              <option value="WEB_DIALER">Web dialer — Smartflow browser phone</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-400">Real dialing uses the Tata account below if assigned.</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">
+              Tata account
+              {tataAccounts.loading ? ' · loading…' : tataAccounts.data ? ` · ${tataAccounts.data.length} available` : ''}
+            </label>
+            <select
+              value={form.telephonyAccountId}
+              onChange={(e) => setForm({ ...form, telephonyAccountId: e.target.value })}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">— not assigned (use phone/device default) —</option>
+              {(tataAccounts.data ?? []).map((a) => (
+                <option key={a.id} value={a.number || a.id}>
+                  {a.name} · {a.number} [{a.type}]
+                </option>
+              ))}
+            </select>
+            {tataAccounts.error && <p className="mt-1 text-xs text-amber-600">Could not fetch Tata accounts: {tataAccounts.error} — you can still set mobile manually.</p>}
+          </div>
+          <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">Team</label>
             <select
               value={form.teamId}
@@ -290,6 +340,8 @@ export default function UsersPage() {
                 <th className="px-4 py-3 font-medium">Contact</th>
                 <th className="px-4 py-3 font-medium">Role</th>
                 <th className="px-4 py-3 font-medium">Team</th>
+                <th className="px-4 py-3 font-medium">Call source</th>
+                <th className="px-4 py-3 font-medium">Tata account</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
@@ -314,7 +366,18 @@ export default function UsersPage() {
                         </>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{u.phone ?? '—'}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {editing ? (
+                        <input
+                          value={editForm?.phone ?? ''}
+                          onChange={(e) => setEditForm((f) => (f ? { ...f, phone: e.target.value } : f))}
+                          placeholder="Mobile number"
+                          className="w-full max-w-[140px] rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      ) : (
+                        u.phone ?? '—'
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {editing && !isSuper ? (
                         <select
@@ -350,6 +413,50 @@ export default function UsersPage() {
                         </select>
                       ) : (
                         u.team?.name ?? '—'
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {editing ? (
+                        <select
+                          value={editForm?.callDevice ?? 'MOBILE'}
+                          onChange={(e) => setEditForm((f) => (f ? { ...f, callDevice: e.target.value as 'MOBILE' | 'WEB_DIALER' } : f))}
+                          className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                        >
+                          <option value="MOBILE">Mobile</option>
+                          <option value="WEB_DIALER">Web dialer</option>
+                        </select>
+                      ) : (
+                        <Badge tone={u.callDevice === 'WEB_DIALER' ? 'violet' : 'slate'}>
+                          {u.callDevice === 'WEB_DIALER' ? 'Web dialer' : 'Mobile'}
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {editing ? (
+                        <select
+                          value={editForm?.telephonyAccountId ?? ''}
+                          onChange={(e) => setEditForm((f) => (f ? { ...f, telephonyAccountId: e.target.value } : f))}
+                          className="w-full min-w-[160px] rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                        >
+                          <option value="">— not assigned —</option>
+                          {(tataAccounts.data ?? []).map((a) => (
+                            <option key={a.id} value={a.number || a.id}>
+                              {a.name} · {a.number} [{a.type}]
+                            </option>
+                          ))}
+                          {editForm?.telephonyAccountId &&
+                            !(tataAccounts.data ?? []).some((a) => (a.number || a.id) === editForm.telephonyAccountId) && (
+                              <option value={editForm.telephonyAccountId}>
+                                {editForm.telephonyAccountId} (currently assigned)
+                              </option>
+                            )}
+                        </select>
+                      ) : u.telephonyAccountId ? (
+                        <span className="font-mono text-xs text-slate-700" title={u.telephonyAccountId}>
+                          {u.telephonyAccountId}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400">— not assigned —</span>
                       )}
                     </td>
                     <td className="px-4 py-3">

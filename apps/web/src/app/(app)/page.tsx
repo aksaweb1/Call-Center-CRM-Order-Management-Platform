@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hook';
+import { usePageTitle } from '@/lib/use-page-title';
 import { AgentDashboard, ManagerDashboard, CeoDashboard } from '@/lib/types';
 import { Card, Spinner, EmptyState, formatCurrency } from '@/components/ui';
 
@@ -45,6 +46,7 @@ const LEAD_TONES: Record<string, string> = {
 };
 
 export default function DashboardPage() {
+  usePageTitle('Dashboard');
   const { user } = useAuth();
   const role = user?.role ?? 'AGENT';
   const isManager = MANAGER_ROLES.includes(role);
@@ -85,17 +87,17 @@ function AgentDashboardView({ agentId: propAgentId }: { agentId?: string } = {})
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card title="Leads Today" value={String(data.leadsToday)} icon={<Users className="h-4 w-4" />} />
-        <Card title="Calls Today" value={String(data.callsToday)} icon={<PhoneCall className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" />
-        <Card title="Pending Follow-ups" value={String(data.pendingFollowUps)} icon={<CalendarClock className="h-4 w-4" />} accent="bg-amber-50 text-amber-600" />
-        <Card title="Pending Orders" value={String(data.pendingOrders)} icon={<ShoppingBag className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" />
+        <Card title="Leads Today" value={String(data.leadsToday)} icon={<Users className="h-4 w-4" />} href="/leads" />
+        <Card title="Calls Today" value={String(data.callsToday)} icon={<PhoneCall className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" href="/calls" />
+        <Card title="Pending Follow-ups" value={String(data.pendingFollowUps)} icon={<CalendarClock className="h-4 w-4" />} accent="bg-amber-50 text-amber-600" href="/followups" />
+        <Card title="Pending Orders" value={String(data.pendingOrders)} icon={<ShoppingBag className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" href="/orders?status=PENDING" />
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card title="Sales Today" value={formatCurrency(data.salesToday)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" />
-        <Card title="Orders Today" value={String(data.ordersToday)} icon={<ShoppingBag className="h-4 w-4" />} />
-        <Card title="Conversion" value={`${data.conversionPercent}%`} icon={<TrendingUp className="h-4 w-4" />} accent="bg-blue-50 text-blue-600" />
-        <Card title="Avg Call Duration" value={`${Math.round(data.averageCallSecs / 60)}m ${data.averageCallSecs % 60}s`} icon={<Phone className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" />
+        <Card title="Sales Today" value={formatCurrency(data.salesToday)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" href="/orders" />
+        <Card title="Orders Today" value={String(data.ordersToday)} icon={<ShoppingBag className="h-4 w-4" />} href="/orders" />
+        <Card title="Conversion" value={`${data.conversionPercent}%`} icon={<TrendingUp className="h-4 w-4" />} accent="bg-blue-50 text-blue-600" href="/leads?status=CONVERTED" />
+        <Card title="Avg Call Duration" value={`${Math.round(data.averageCallSecs / 60)}m ${data.averageCallSecs % 60}s`} icon={<Phone className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" href="/calls" />
       </div>
     </div>
   );
@@ -162,10 +164,10 @@ function ManagerOverview({ onSelectAgent }: { onSelectAgent?: (id: string) => vo
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card title="Revenue (30d)" value={formatCurrency(data.revenue)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" />
-        <Card title="Orders (30d)" value={String(data.totalOrders)} icon={<ShoppingBag className="h-4 w-4" />} />
-        <Card title="Pending Follow-ups" value={String(data.pendingFollowUps)} icon={<CalendarClock className="h-4 w-4" />} accent="bg-amber-50 text-amber-600" />
-        <Card title="Avg Call Duration" value={`${Math.round(data.callStats.avgDurationSecs / 60)}m ${data.callStats.avgDurationSecs % 60}s`} icon={<Phone className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" />
+        <Card title="Revenue (30d)" value={formatCurrency(data.revenue)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" href="/orders" />
+        <Card title="Orders (30d)" value={String(data.totalOrders)} icon={<ShoppingBag className="h-4 w-4" />} href="/orders" />
+        <Card title="Pending Follow-ups" value={String(data.pendingFollowUps)} icon={<CalendarClock className="h-4 w-4" />} accent="bg-amber-50 text-amber-600" href="/followups" />
+        <Card title="Avg Call Duration" value={`${Math.round(data.callStats.avgDurationSecs / 60)}m ${data.callStats.avgDurationSecs % 60}s`} icon={<Phone className="h-4 w-4" />} accent="bg-violet-50 text-violet-600" href="/calls" />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -257,10 +259,10 @@ function ExecutiveOverview() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card title="Revenue (90d)" value={formatCurrency(data.revenue)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" />
-        <Card title="Orders (90d)" value={String(data.totalOrders)} icon={<ShoppingBag className="h-4 w-4" />} />
-        <Card title="Cancellation Rate" value={`${data.cancellationRate.toFixed(1)}%`} icon={<Percent className="h-4 w-4" />} accent="bg-red-50 text-red-600" />
-        <Card title="Top Sources" value={String(data.leadBySource.length)} icon={<BarChart3 className="h-4 w-4" />} />
+        <Card title="Revenue (90d)" value={formatCurrency(data.revenue)} icon={<Wallet className="h-4 w-4" />} accent="bg-emerald-50 text-emerald-600" href="/reports" />
+        <Card title="Orders (90d)" value={String(data.totalOrders)} icon={<ShoppingBag className="h-4 w-4" />} href="/orders" />
+        <Card title="Cancellation Rate" value={`${data.cancellationRate.toFixed(1)}%`} icon={<Percent className="h-4 w-4" />} accent="bg-red-50 text-red-600" href="/orders?status=CANCELLED" />
+        <Card title="Top Sources" value={String(data.leadBySource.length)} icon={<BarChart3 className="h-4 w-4" />} href="/leads" />
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

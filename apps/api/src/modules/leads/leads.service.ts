@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { LeadStatus } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { AssignmentStrategy, RoleType } from '../../common/enums/types.enum';
 import { AuthUser } from '../../common/interfaces/auth.interface';
@@ -343,6 +344,64 @@ export class LeadsService {
       });
     }
     return { assigned: result.count };
+  }
+
+  /** Bulk status change. Terminal-status leads are rejected up front. */
+  async bulkStatus(
+    leadIds: string[],
+    status: LeadStatus,
+    userId: string,
+    actor?: AuthUser,
+  ) {
+    // Terminal states are only reachable through real flows (order
+    // placement/delivery, cancellation) — never via bulk edit.
+    const allowedTargets: LeadStatus[] = [
+      'NEW', 'ASSIGNED', 'CALLING', 'INTERESTED', 'NO_ANSWER',
+      'BUSY', 'WRONG_NUMBER', 'CALL_BACK_REQUESTED', 'NOT_INTERESTED',
+    ];
+    if (!allowedTargets.includes(status)) {
+      throw new ConflictException(`Leads cannot be bulk-set to ${status}`);
+    }
+
+    const leads = await this.prisma.lead.findMany({
+      where: { id: { in: leadIds }, deletedAt: null },
+      select: { id: true, status: true, customerId: true },
+    });
+    if (leads.length === 0) throw new NotFoundException('No matching leads found');
+    const blocked = leads.filter((l) =>
+      LeadsRepository.TERMINAL_STATUSES.includes(l.status as (typeof LeadsRepository.TERMINAL_STATUSES)[number]),
+    );
+    if (blocked.length > 0) {
+      throw new ConflictException(
+        `${blocked.length} lead(s) are in a terminal status (${[...new Set(blocked.map((l) => l.status))].join(', ')}) and cannot be updated`,
+      );
+    }
+    // Frontline roles may only bulk-update their own leads.
+    if (actor && this.isOwnOnly(actor)) {
+      const own = await this.prisma.lead.findMany({
+        where: { id: { in: leads.map((l) => l.id) }, agentId: actor.id },
+        select: { id: true },
+      });
+      if (own.length !== leads.length) {
+        throw new ConflictException('You can only update leads assigned to you');
+      }
+    }
+
+    const result = await this.prisma.lead.updateMany({
+      where: { id: { in: leads.map((l) => l.id) }, deletedAt: null },
+      data: { status, lastActivityAt: new Date() },
+    });
+
+    for (const l of leads) {
+      await this.activityService.record({
+        userId,
+        customerId: l.customerId,
+        leadId: l.id,
+        action: 'Lead Status Changed',
+        metadata: { to: status, bulk: true },
+      });
+    }
+    return { updated: result.count };
   }
 
   async remove(id: string): Promise<void> {

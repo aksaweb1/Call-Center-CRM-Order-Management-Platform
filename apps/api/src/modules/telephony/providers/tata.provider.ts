@@ -3,6 +3,7 @@ import { config } from '../../../config';
 import {
   InitiateCallInput,
   CallResult,
+  TelephonyAccount,
   TelephonyProvider,
   WebhookCallContext,
   TelephonyProviders,
@@ -211,6 +212,116 @@ export class TataProvider implements TelephonyProvider {
     if (Array.isArray(body)) return body;
     const obj = body as { data?: unknown[] };
     return obj.data ?? [];
+  }
+
+  /** Lists all Smartflow agents / DIDs that can be bound to CRM users. */
+  async listAccounts(): Promise<TelephonyAccount[]> {
+    const jwt = await this.token();
+
+    // No real credentials → return what the env is currently routing through.
+    if (jwt === 'simulated') {
+      const fallback: TelephonyAccount[] = [];
+      if (this.agentNumber) {
+        fallback.push({
+          id: this.agentNumber,
+          name: `Agent ${this.agentNumber}`,
+          number: this.agentNumber,
+          type: 'MOBILE',
+          status: 'active',
+          raw: { source: 'env:TATA_AGENT_NUMBER' },
+        });
+      }
+      if (this.callerId && this.callerId !== this.agentNumber) {
+        fallback.push({
+          id: this.callerId,
+          name: `Caller ID ${this.callerId}`,
+          number: this.callerId,
+          type: 'DID',
+          status: 'active',
+          raw: { source: 'env:TATA_CALLER_ID' },
+        });
+      }
+      return fallback;
+    }
+
+    const endpoints = [
+      '/agents',
+      '/agent/list',
+      '/users',
+      '/extensions',
+      '/did/list',
+      '/caller_ids',
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(this.resolveUrl(ep), {
+          headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/json' },
+        });
+        if (!res.ok) continue;
+        const body = (await res.json()) as unknown;
+        const arr = this.extractAccountArray(body);
+        if (arr && arr.length > 0) {
+          return arr.map((r) => this.normalizeTataAccount(r));
+        }
+      } catch {
+        // try next endpoint
+      }
+    }
+
+    // Nothing listed via API — expose env fallback so assignment still works.
+    this.logger.warn('TATA listAccounts: no endpoint returned data — falling back to env numbers');
+    const fallback: TelephonyAccount[] = [];
+    if (this.agentNumber) {
+      fallback.push({
+        id: this.agentNumber,
+        name: `Agent ${this.agentNumber} (env)`,
+        number: this.agentNumber,
+        type: 'MOBILE',
+        status: 'active',
+        raw: { source: 'env' },
+      });
+    }
+    if (this.callerId && this.callerId !== this.agentNumber) {
+      fallback.push({
+        id: this.callerId,
+        name: `Caller ID ${this.callerId} (env)`,
+        number: this.callerId,
+        type: 'DID',
+        status: 'active',
+        raw: { source: 'env' },
+      });
+    }
+    return fallback;
+  }
+
+  private extractAccountArray(body: unknown): Record<string, unknown>[] | null {
+    if (Array.isArray(body)) return body as Record<string, unknown>[];
+    if (body && typeof body === 'object') {
+      const obj = body as Record<string, unknown>;
+      for (const key of ['data', 'agents', 'results', 'users', 'extensions', 'caller_ids', 'dids']) {
+        const v = obj[key];
+        if (Array.isArray(v)) return v as Record<string, unknown>[];
+        // nested like { data: { agents: [...] } }
+        if (v && typeof v === 'object' && Array.isArray((v as Record<string, unknown>).agents)) {
+          return (v as Record<string, unknown>).agents as Record<string, unknown>[];
+        }
+      }
+    }
+    return null;
+  }
+
+  private normalizeTataAccount(raw: Record<string, unknown>): TelephonyAccount {
+    const id = String(
+      raw.agent_id ?? raw.id ?? raw.extension ?? raw.agent_number ?? raw.number ?? raw.did ?? Math.random().toString(36).slice(2, 8),
+    );
+    const name = String(raw.agent_name ?? raw.name ?? raw.display_name ?? raw.username ?? id);
+    const number = String(raw.agent_number ?? raw.number ?? raw.phone ?? raw.did ?? raw.extension ?? id);
+    // Short numeric extensions are typically web dialer/SIP, long numbers are mobile/DID
+    const isExtension = /^\d{3,5}$/.test(number);
+    const type: TelephonyAccount['type'] = isExtension ? 'WEB_DIALER' : 'MOBILE';
+    const status = (raw.status ?? raw.state ?? 'active').toString();
+    return { id, name, number, type, status, raw };
   }
 
   buildWebhookUrl(baseUrl: string): string {

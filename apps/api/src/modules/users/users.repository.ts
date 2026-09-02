@@ -22,6 +22,8 @@ export class UsersRepository {
         role: { connect: { key: dto.roleKey } },
         team: dto.teamId ? { connect: { id: dto.teamId } } : undefined,
         avatarUrl: dto.avatarUrl,
+        ...(dto.callDevice ? { callDevice: dto.callDevice } : {}),
+        ...(dto.telephonyAccountId ? { telephonyAccountId: dto.telephonyAccountId } : {}),
       },
     });
   }
@@ -103,6 +105,8 @@ export class UsersRepository {
         ...(dto.fullName ? { fullName: dto.fullName } : {}),
         ...(dto.avatarUrl ? { avatarUrl: dto.avatarUrl } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(dto.callDevice ? { callDevice: dto.callDevice } : {}),
+        ...(dto.telephonyAccountId !== undefined ? { telephonyAccountId: dto.telephonyAccountId || null } : {}),
         ...(passwordHash ? { passwordHash } : {}),
         ...(dto.roleKey ? { role: { connect: { key: dto.roleKey } } } : {}),
         ...(dto.teamId

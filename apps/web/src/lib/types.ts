@@ -11,12 +11,22 @@ export interface AuthUser {
   permissions: string[];
 }
 
+export interface TelephonyAccount {
+  id: string;
+  name: string;
+  number: string;
+  type: 'MOBILE' | 'WEB_DIALER' | 'DID' | 'AGENT';
+  status?: string;
+}
+
 export interface User {
   id: string;
   email: string;
   fullName: string;
   phone?: string | null;
   isActive?: boolean;
+  callDevice?: 'MOBILE' | 'WEB_DIALER' | null;
+  telephonyAccountId?: string | null;
   role?: { id: string; key: string; name: string } | null;
   team?: { id: string; name: string; code: string } | null;
 }
@@ -177,8 +187,18 @@ export interface Call {
   durationSecs?: number | null;
   outcome?: string | null;
   notes?: string | null;
+  leadId?: string | null;
+  customerId?: string | null;
   agent?: { id: string; fullName: string } | null;
   customer?: { id: string; name: string; phone: string };
+  lead?: { id: string; status: string } | null;
+}
+
+export interface SearchResult {
+  customers: Array<{ id: string; name: string; phone: string; email?: string | null }>;
+  leads: Array<{ id: string; title?: string | null; status: string; customer?: { id: string; name: string; phone: string } | null }>;
+  orders: Array<{ id: string; orderNumber: string; total: string; status: string }>;
+  products: Array<{ id: string; name: string; sku: string; price: string }>;
 }
 
 export interface FollowUp {

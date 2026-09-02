@@ -1,18 +1,50 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hook';
+import { useUrlParams } from '@/lib/use-url-params';
+import { usePageTitle } from '@/lib/use-page-title';
 import { Lead, PageResult, User } from '@/lib/types';
-import { Badge, EmptyState, Spinner, formatDate } from '@/components/ui';
+import { Badge, EmptyState, Spinner, TableSkeleton, formatDate } from '@/components/ui';
+import { CallButton } from '@/components/call-button';
 import { api } from '@/lib/client';
 
-export default function LeadsPage() {
+const LEAD_STATUSES = ['NEW', 'ASSIGNED', 'CALLING', 'INTERESTED', 'NO_ANSWER', 'BUSY', 'WRONG_NUMBER', 'CALL_BACK_REQUESTED', 'NOT_INTERESTED'];
+const LEAD_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+
+function LeadsPageInner() {
+  usePageTitle('Leads');
   const { user } = useAuth();
   const canCreate = user?.permissions?.includes('lead.create') ?? false;
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const canUpdate = user?.permissions?.includes('lead.update') ?? false;
+  const canAssign = user?.permissions?.includes('lead.assign') ?? false;
+  const canReadUsers = user?.permissions?.includes('user.read') ?? false;
+  const { get, set } = useUrlParams();
+
+  // Filter state initialised from the URL so deep links (?customerId=…) work.
+  const [page, setPage] = useState(() => Math.max(1, Number(get('page')) || 1));
+  const [search, setSearch] = useState(() => get('search') ?? '');
+  const [searchInput, setSearchInput] = useState(() => get('search') ?? '');
+  const [statusFilter, setStatusFilter] = useState(() => get('status') ?? '');
+  const [priorityFilter, setPriorityFilter] = useState(() => get('priority') ?? '');
+  const [agentFilter, setAgentFilter] = useState(() => get('agentId') ?? '');
+  const customerId = get('customerId');
+
+  // Debounce the search box so we don't hammer the API on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (searchInput !== search) {
+        setSearch(searchInput);
+        setPage(1);
+        set({ search: searchInput || undefined, page: undefined });
+        setSelected(new Set());
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
   const [form, setForm] = useState({ name: '', phone: '', priority: 'MEDIUM', agentId: '' });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState('');
@@ -21,15 +53,101 @@ export default function LeadsPage() {
   const [assignPopup, setAssignPopup] = useState<{ from: string; to: string } | null>(null);
   const [confirmAssign, setConfirmAssign] = useState<{ agentId: string; from: string; to: string } | null>(null);
 
+  // ── Bulk selection ────────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+
   const qs = new URLSearchParams({ page: String(page), limit: '20', sortBy: 'createdAt' });
   if (search) qs.set('search', search);
+  if (statusFilter) qs.set('status', statusFilter);
+  if (priorityFilter) qs.set('priority', priorityFilter);
+  if (agentFilter) qs.set('agentId', agentFilter);
+  if (customerId) qs.set('customerId', customerId);
+
   const { data, loading, error, setData } = useApi<PageResult<Lead>>(
     `/leads?${qs.toString()}&_=${refreshKey}`,
   );
-  const agents = useApi<PageResult<User>>('/users?roleKey=AGENT&limit=100');
+  // Only users who may read employees can pick a manual agent.
+  const agents = useApi<PageResult<User>>(canReadUsers ? '/users?roleKey=AGENT&limit=100' : null);
 
   const leads = useMemo(() => data?.items ?? [], [data]);
   const agentList = useMemo(() => agents.data?.items ?? [], [agents.data]);
+
+  const allOnPageSelected = leads.length > 0 && leads.every((l) => selected.has(l.id));
+
+  function toggleAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) leads.forEach((l) => next.delete(l.id));
+      else leads.forEach((l) => next.add(l.id));
+      return next;
+    });
+  }
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function bulkReassign(agentId: string) {
+    if (!agentId || selected.size === 0) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    try {
+      const r = await api<{ assigned: number }>('/leads/assign-many', {
+        method: 'POST',
+        body: JSON.stringify({ leadIds: [...selected], agentId }),
+      });
+      const name = agentList.find((a) => a.id === agentId)?.fullName ?? 'agent';
+      setBulkMsg(`${r.assigned} lead(s) reassigned to ${name}.`);
+      setSelected(new Set());
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      setBulkMsg(e instanceof Error ? e.message : 'Bulk reassign failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkStatus(status: string) {
+    if (!status || selected.size === 0) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    try {
+      const r = await api<{ updated: number }>('/leads/bulk-status', {
+        method: 'POST',
+        body: JSON.stringify({ leadIds: [...selected], status }),
+      });
+      setBulkMsg(`${r.updated} lead(s) marked ${status}.`);
+      setSelected(new Set());
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      setBulkMsg(e instanceof Error ? e.message : 'Bulk update failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function applyFilter(update: { page?: number; search?: string; status?: string; priority?: string; agentId?: string }) {
+    if (update.page !== undefined) setPage(update.page);
+    if (update.search !== undefined) setSearch(update.search);
+    if (update.status !== undefined) setStatusFilter(update.status);
+    if (update.priority !== undefined) setPriorityFilter(update.priority);
+    if (update.agentId !== undefined) setAgentFilter(update.agentId);
+    set({
+      page: !update.page || update.page === 1 ? undefined : update.page,
+      search: update.search || undefined,
+      status: update.status || undefined,
+      priority: update.priority || undefined,
+      agentId: update.agentId || undefined,
+    });
+    setSelected(new Set());
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -105,17 +223,96 @@ export default function LeadsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900">Leads</h1>
-        <input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          placeholder="Search leads…"
-          className="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
+        <h1 className="text-xl font-bold text-slate-900">
+          Leads{customerId ? ' — customer' : ''}
+        </h1>
       </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+        <input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search leads…"
+          className="w-56 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => applyFilter({ status: e.target.value, page: 1 })}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">All statuses</option>
+          {LEAD_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select
+          value={priorityFilter}
+          onChange={(e) => applyFilter({ priority: e.target.value, page: 1 })}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">All priorities</option>
+          {LEAD_PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        {canReadUsers && (
+          <select
+            value={agentFilter}
+            onChange={(e) => applyFilter({ agentId: e.target.value, page: 1 })}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">All agents</option>
+            {agentList.map((a) => <option key={a.id} value={a.id}>{a.fullName}</option>)}
+          </select>
+        )}
+        {(search || statusFilter || priorityFilter || agentFilter || customerId) && (
+          <button
+            onClick={() => {
+              window.history.replaceState(null, '', '/leads');
+              setSearch(''); setSearchInput(''); setStatusFilter(''); setPriorityFilter(''); setAgentFilter('');
+              setPage(1);
+              setSelected(new Set());
+            }}
+            className="ml-auto rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (canAssign || canUpdate) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <span className="text-sm font-medium text-blue-800">{selected.size} selected</span>
+          {canAssign && canReadUsers && (
+            <select
+              defaultValue=""
+              disabled={bulkBusy}
+              onChange={(e) => { void bulkReassign(e.target.value); e.target.value = ''; }}
+              className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Reassign to…</option>
+              {agentList.map((a) => <option key={a.id} value={a.id}>{a.fullName}</option>)}
+            </select>
+          )}
+          {canUpdate && (
+            <select
+              defaultValue=""
+              disabled={bulkBusy}
+              onChange={(e) => { void bulkStatus(e.target.value); e.target.value = ''; }}
+              className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Set status to…</option>
+              {LEAD_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => setSelected(new Set())}
+            className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+          >
+            Clear selection
+          </button>
+          {bulkBusy && <Spinner label="Working…" />}
+          {bulkMsg && <span className="text-sm text-slate-700">{bulkMsg}</span>}
+        </div>
+      )}
 
       {canCreate && (
         <div className="rounded-xl border border-slate-200 bg-white p-5">
@@ -181,15 +378,21 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {loading && <Spinner />}
+      {loading && <TableSkeleton rows={6} cols={7} />}
       {error && <EmptyState title="Could not load leads" description={error} />}
 
       {!loading && !error && (
         <>
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
+                  {(canUpdate || canAssign) && (
+                    <th className="w-10 px-3 py-3">
+                      <input type="checkbox" checked={allOnPageSelected} onChange={toggleAll} aria-label="Select all on page" />
+                    </th>
+                  )}
                   <th className="px-4 py-3">Customer</th>
                   <th className="px-4 py-3">Phone</th>
                   <th className="px-4 py-3">Source</th>
@@ -203,19 +406,38 @@ export default function LeadsPage() {
               <tbody className="divide-y divide-slate-100">
                 {leads.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
-                      No leads yet.
+                    <td colSpan={(canUpdate || canAssign) ? 9 : 8} className="px-4 py-10 text-center text-slate-400">
+                      No leads match.
                     </td>
                   </tr>
                 )}
                 {leads.map((l) => (
-                  <tr key={l.id} className="hover:bg-slate-50">
+                  <tr key={l.id} className={`hover:bg-slate-50 ${selected.has(l.id) ? 'bg-blue-50/60' : ''}`}>
+                    {(canUpdate || canAssign) && (
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(l.id)}
+                          onChange={() => toggleOne(l.id)}
+                          aria-label={`Select lead ${l.customer?.name ?? l.id}`}
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <Link href={`/leads/${l.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline">
                         {l.customer?.name ?? '—'}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{l.customer?.phone ?? '—'}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {l.customer?.phone ? (
+                        <>
+                          <a href={`tel:${l.customer.phone}`} className="hover:text-emerald-600">{l.customer.phone}</a>
+                          <span className="ml-2 inline-block align-middle">
+                            <CallButton leadId={l.id} />
+                          </span>
+                        </>
+                      ) : '—'}
+                    </td>
                     <td className="px-4 py-3 text-slate-600">{l.sourceRef?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       <Badge tone={STATUS_TONE[l.status] ?? 'slate'}>
@@ -229,18 +451,21 @@ export default function LeadsPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-600">{l.agent?.fullName ?? 'Unassigned'}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDate(l.createdAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/leads/${l.id}`}
-                        className="inline-flex rounded-lg border border-blue-200 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50"
-                      >
-                        Handle
-                      </Link>
+                    <td className="px-4 py-3">
+                      <span className="flex items-center justify-end gap-1.5">
+                        <Link
+                          href={`/leads/${l.id}`}
+                          className="inline-flex rounded-lg border border-blue-200 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                        >
+                          Handle
+                        </Link>
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {data && data.totalPages > 1 && (
@@ -250,14 +475,14 @@ export default function LeadsPage() {
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => applyFilter({ page: Math.max(1, page - 1) })}
                   disabled={page <= 1}
                   className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40"
                 >
                   Prev
                 </button>
                 <button
-                  onClick={() => setPage((p) => p + 1)}
+                  onClick={() => applyFilter({ page: Math.min(data.totalPages, page + 1) })}
                   disabled={page >= data.totalPages}
                   className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40"
                 >
@@ -340,6 +565,14 @@ export default function LeadsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={<Spinner label="Loading leads…" />}>
+      <LeadsPageInner />
+    </Suspense>
   );
 }
 

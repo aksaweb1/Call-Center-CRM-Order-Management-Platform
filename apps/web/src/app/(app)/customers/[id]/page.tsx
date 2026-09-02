@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useApi } from '@/lib/hook';
 import { useAuth } from '@/lib/auth';
 import {
@@ -20,7 +20,9 @@ import {
   formatCurrency,
   formatDate,
 } from '@/components/ui';
+import { usePageTitle } from '@/lib/use-page-title';
 import OrderForm from '@/components/order-form';
+import { CallButton } from '@/components/call-button';
 import { api } from '@/lib/client';
 
 export default function CustomerDetailPage() {
@@ -35,6 +37,7 @@ export default function CustomerDetailPage() {
   const notes = useApi<PageResult<Note>>(id ? `/notes?customerId=${id}&limit=5` : null);
 
   const c = customer.data;
+  usePageTitle(c ? `${c.name} — Customer` : 'Customer');
 
   const canUpdateCustomer = user?.permissions?.includes('customer.update') ?? false;
   const [showOrderForm, setShowOrderForm] = useState(false);
@@ -56,6 +59,10 @@ export default function CustomerDetailPage() {
   });
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [pinLoading, setPinLoading] = useState(false);
+  const canCreateNote = user?.permissions?.includes('note.create') ?? false;
+  const [customerNoteBody, setCustomerNoteBody] = useState('');
+  const [customerNotePinned, setCustomerNotePinned] = useState(false);
+  const [customerNoteBusy, setCustomerNoteBusy] = useState(false);
 
   function openEdit() {
     if (!c) return;
@@ -106,6 +113,29 @@ export default function CustomerDetailPage() {
       setEditMsg({ tone: 'err', text: err instanceof Error ? err.message : 'Could not update profile' });
     } finally {
       setSavingEdit(false);
+    }
+  }
+
+  async function handleCustomerNoteSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!c || !customerNoteBody.trim()) return;
+    setCustomerNoteBusy(true);
+    try {
+      await api('/notes', {
+        method: 'POST',
+        body: JSON.stringify({ body: customerNoteBody.trim(), customerId: c.id, pinned: customerNotePinned || undefined }),
+      });
+      setCustomerNoteBody('');
+      setCustomerNotePinned(false);
+      // reload notes - bump cache with reload
+      notes.setData(null);
+      const fresh = await api<PageResult<Note>>(`/notes?customerId=${c.id}&limit=5&_=${Date.now()}`);
+      notes.setData(fresh);
+      setMsg({ tone: 'ok', text: 'Note added.' });
+    } catch (err) {
+      setMsg({ tone: 'err', text: err instanceof Error ? err.message : 'Could not add note' });
+    } finally {
+      setCustomerNoteBusy(false);
     }
   }
 
@@ -289,7 +319,7 @@ export default function CustomerDetailPage() {
         <div className="rounded-xl border border-slate-200 bg-white p-5 lg:col-span-2">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Profile</h2>
           <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-            <div><dt className="text-slate-500">Phone</dt><dd className="font-medium text-slate-900">{c.phone}</dd></div>
+            <div><dt className="text-slate-500">Phone</dt><dd className="font-medium text-slate-900"><a href={`tel:${c.phone}`} className="hover:text-emerald-600">{c.phone}</a></dd></div>
             <div><dt className="text-slate-500">Alternate phone</dt><dd className="font-medium text-slate-900">{c.alternatePhone ?? '—'}</dd></div>
             <div><dt className="text-slate-500">Email</dt><dd className="font-medium text-slate-900">{c.email ?? '—'}</dd></div>
             <div><dt className="text-slate-500">City / State</dt><dd className="font-medium text-slate-900">{[c.city, c.state].filter(Boolean).join(', ') || '—'}</dd></div>
@@ -340,7 +370,11 @@ export default function CustomerDetailPage() {
               <tbody className="divide-y divide-slate-100">
                 {(orders.data?.items ?? []).map((o) => (
                   <tr key={o.id}>
-                    <td className="px-4 py-2 font-medium text-blue-600">{o.orderNumber}</td>
+                    <td className="px-4 py-2 font-medium">
+                      <Link href={`/orders/${o.id}`} className="text-blue-600 hover:underline">
+                        {o.orderNumber}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2 text-slate-600">{formatDate(o.placedAt)}</td>
                     <td className="px-4 py-2 text-slate-900">{formatCurrency(o.total)}</td>
                     <td className="px-4 py-2"><Badge tone={STATUS_TONE(o.status)}>{o.status}</Badge></td>
@@ -366,6 +400,7 @@ export default function CustomerDetailPage() {
                   <th className="px-4 py-2">Priority</th>
                   <th className="px-4 py-2">Agent</th>
                   <th className="px-4 py-2">Created</th>
+                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -373,8 +408,8 @@ export default function CustomerDetailPage() {
                   const history = (l as unknown as { metadata?: { agentHistory?: Array<{ agent: string; dateIso: string | null; remark: string }> } }).metadata?.agentHistory;
                   const hasHistory = Array.isArray(history) && history.length > 1;
                   return (
-                    <>
-                      <tr key={l.id}>
+                    <Fragment key={l.id}>
+                      <tr>
                         <td className="px-4 py-2">
                           <Link href={`/leads/${l.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline">
                             {l.title ?? l.customer?.name ?? '—'}
@@ -384,10 +419,11 @@ export default function CustomerDetailPage() {
                         <td className="px-4 py-2"><Badge tone={l.priority === 'URGENT' || l.priority === 'HIGH' ? 'red' : 'slate'}>{l.priority}</Badge></td>
                         <td className="px-4 py-2 text-slate-600">{l.agent?.fullName ?? '—'}</td>
                         <td className="px-4 py-2 text-slate-500">{formatDate(l.createdAt)}</td>
+                        <td className="px-4 py-2 text-right"><CallButton leadId={l.id} /></td>
                       </tr>
                       {hasHistory && (
-                        <tr key={`${l.id}-history`}>
-                          <td colSpan={5} className="bg-amber-50/60 px-4 py-2 text-xs text-slate-600">
+                        <tr>
+                          <td colSpan={6} className="bg-amber-50/60 px-4 py-2 text-xs text-slate-600">
                             <span className="font-medium text-amber-700">Flow: </span>
                             {history!.map((h, i) => (
                               <span key={i}>
@@ -401,7 +437,7 @@ export default function CustomerDetailPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -440,6 +476,33 @@ export default function CustomerDetailPage() {
           )}
         </Section>
 
+        {canCreateNote && (
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Add a note</h3>
+            <form onSubmit={handleCustomerNoteSubmit} className="space-y-2">
+              <textarea
+                value={customerNoteBody}
+                onChange={(e) => setCustomerNoteBody(e.target.value)}
+                placeholder="Write a note about this customer…"
+                rows={2}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <input type="checkbox" checked={customerNotePinned} onChange={(e) => setCustomerNotePinned(e.target.checked)} className="h-3.5 w-3.5 rounded border-slate-300" />
+                  Pin this note
+                </label>
+                <button
+                  type="submit"
+                  disabled={customerNoteBusy || !customerNoteBody.trim()}
+                  className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+                >
+                  {customerNoteBusy ? 'Saving…' : 'Add note'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
         <Section title="Notes" link={`/notes?customerId=${c.id}`}>
           {notes.loading ? <Spinner /> : notes.error ? (
             <EmptyState title="Could not load notes" description={notes.error} />

@@ -6,6 +6,7 @@ import {
   IsString,
   Length,
 } from 'class-validator';
+import { CallDevice } from '@prisma/client';
 
 export class CreateUserDto {
   @IsEmail()
@@ -31,7 +32,16 @@ export class CreateUserDto {
   teamId?: string;
 
   @IsOptional()
+  @IsString()
   avatarUrl?: string;
+
+  @IsOptional()
+  @IsEnum(CallDevice)
+  callDevice?: CallDevice;
+
+  @IsOptional()
+  @IsString()
+  telephonyAccountId?: string;
 }
 
 export class UpdateUserDto {
@@ -63,6 +73,14 @@ export class UpdateUserDto {
 
   @IsOptional()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsEnum(CallDevice)
+  callDevice?: CallDevice;
+
+  @IsOptional()
+  @IsString()
+  telephonyAccountId?: string;
 }
 
 export class SetUserPermissionsDto {

@@ -3,13 +3,15 @@
 import { useMemo, useState } from 'react';
 import { useApi } from '@/lib/hook';
 import { useAuth } from '@/lib/auth';
+import { usePageTitle } from '@/lib/use-page-title';
 import { Category, PageResult, Product } from '@/lib/types';
-import { Badge, EmptyState, Spinner, formatCurrency } from '@/components/ui';
+import { Badge, EmptyState, Spinner, TableSkeleton, formatCurrency } from '@/components/ui';
 import { api } from '@/lib/client';
 
 type Mode = 'add' | 'edit' | null;
 
 export default function ProductsPage() {
+  usePageTitle('Products');
   const { user } = useAuth();
   const canCreate = user?.permissions?.includes('product.create') ?? false;
   const canUpdate = user?.permissions?.includes('product.update') ?? false;
@@ -22,6 +24,7 @@ export default function ProductsPage() {
   const [mode, setMode] = useState<Mode>(null);
   const [editing, setEditing] = useState<Product | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const [stockAdjust, setStockAdjust] = useState<{ product: Product; qty: string; reason: string } | null>(null);
 
   const qs = new URLSearchParams({ page: String(page), limit: '20' });
   if (search.trim()) qs.set('search', search.trim());
@@ -101,6 +104,58 @@ export default function ProductsPage() {
         />
       )}
 
+      {stockAdjust && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="mb-1 text-sm font-semibold text-slate-900">Adjust stock — {stockAdjust.product.name}</h3>
+            <p className="mb-3 text-xs text-slate-500">Current stock: {stockAdjust.product.stock}</p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const n = Number(stockAdjust.qty);
+                if (Number.isNaN(n) || n === 0) { setMsg({ tone: 'err', text: 'Enter a non-zero quantity (use + or -)' }); return; }
+                try {
+                  await api(`/products/${stockAdjust.product.id}/stock`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ quantity: n, reason: stockAdjust.reason.trim() || 'MANUAL' }),
+                  });
+                  setMsg({ tone: 'ok', text: `Stock updated for ${stockAdjust.product.name}.` });
+                  setStockAdjust(null);
+                  refresh();
+                } catch (err) {
+                  setMsg({ tone: 'err', text: err instanceof Error ? err.message : 'Could not adjust stock' });
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Quantity (use + to add, - to remove)</label>
+                <input
+                  type="number"
+                  value={stockAdjust.qty}
+                  onChange={(e) => setStockAdjust((s) => s ? { ...s, qty: e.target.value } : null)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Reason</label>
+                <input
+                  value={stockAdjust.reason}
+                  onChange={(e) => setStockAdjust((s) => s ? { ...s, reason: e.target.value } : null)}
+                  placeholder="MANUAL"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setStockAdjust(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
         <input
           value={search}
@@ -113,7 +168,7 @@ export default function ProductsPage() {
         />
       </div>
 
-      {loading && <Spinner />}
+      {loading && <TableSkeleton rows={6} cols={6} />}
       {error && <EmptyState title="Could not load products" description={error} />}
 
       {!loading && !error && (
@@ -134,8 +189,11 @@ export default function ProductsPage() {
               <tbody className="divide-y divide-slate-100">
                 {products.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
-                      No products yet.
+                    <td colSpan={7} className="px-4 py-10 text-center">
+                      <p className="text-slate-400">No products yet.</p>
+                      {canCreate && !search && (
+                        <button onClick={() => { setEditing(null); setMode('add'); }} className="mt-2 text-sm font-medium text-blue-600 hover:underline">+ Add your first product</button>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -154,26 +212,7 @@ export default function ProductsPage() {
                       {p.stock}
                       {canStock && (
                         <button
-                          onClick={() => {
-                            const qty = prompt(`Adjust stock for ${p.name} (use + or - value):`, '0');
-                            if (qty === null) return;
-                            const n = Number(qty);
-                            if (Number.isNaN(n)) return;
-                            const reason = prompt('Reason for adjustment:', 'MANUAL');
-                            if (reason === null) return;
-                            void (async () => {
-                              try {
-                                await api(`/products/${p.id}/stock`, {
-                                  method: 'PATCH',
-                                  body: JSON.stringify({ quantity: n, reason: reason.trim() || 'MANUAL' }),
-                                });
-                                setMsg({ tone: 'ok', text: `Stock updated for ${p.name}.` });
-                                refresh();
-                              } catch (e) {
-                                setMsg({ tone: 'err', text: e instanceof Error ? e.message : 'Could not adjust stock' });
-                              }
-                            })();
-                          }}
+                          onClick={() => setStockAdjust({ product: p, qty: '0', reason: 'MANUAL' })}
                           className="ml-2 text-xs font-medium text-blue-600 hover:underline"
                           title="Adjust stock"
                         >
@@ -397,6 +436,8 @@ function CategoryManager({
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editCatName, setEditCatName] = useState('');
 
   if (!canCreate && !canUpdate && !canDelete) return null;
 
@@ -430,15 +471,15 @@ function CategoryManager({
     }
   }
 
-  async function renameCategory(id: string, current: string) {
-    const next = prompt('Rename category to:', current);
-    if (next === null || !next.trim()) return;
+  async function submitRename(id: string) {
+    if (!editCatName.trim()) return;
     setBusy(true);
     try {
       await api(`/products/categories/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: next.trim() }),
+        body: JSON.stringify({ name: editCatName.trim() }),
       });
+      setEditingCatId(null);
       cats.reload();
       onChanged();
     } catch (e) {
@@ -484,19 +525,35 @@ function CategoryManager({
           <ul className="max-h-56 space-y-1 overflow-y-auto">
             {(cats.data ?? []).map((c) => (
               <li key={c.id} className="flex items-center justify-between rounded-md px-2 py-1 text-sm text-slate-700 hover:bg-slate-50">
-                <span>{c.name}</span>
-                <span className="flex gap-1">
-                  {canUpdate && (
-                    <button onClick={() => renameCategory(c.id, c.name)} className="text-xs font-medium text-blue-600 hover:underline">
-                      Rename
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button onClick={() => deleteCategory(c.id, c.name)} className="text-xs font-medium text-red-600 hover:underline">
-                      Delete
-                    </button>
-                  )}
-                </span>
+                {editingCatId === c.id ? (
+                  <span className="flex flex-1 items-center gap-1">
+                    <input
+                      value={editCatName}
+                      onChange={(e) => setEditCatName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') void submitRename(c.id); if (e.key === 'Escape') setEditingCatId(null); }}
+                      className="flex-1 rounded border border-blue-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
+                      autoFocus
+                    />
+                    <button onClick={() => void submitRename(c.id)} disabled={busy} className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">Save</button>
+                    <button onClick={() => setEditingCatId(null)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </span>
+                ) : (
+                  <>
+                    <span>{c.name}</span>
+                    <span className="flex gap-1">
+                      {canUpdate && (
+                        <button onClick={() => { setEditingCatId(c.id); setEditCatName(c.name); }} className="text-xs font-medium text-blue-600 hover:underline">
+                          Rename
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => deleteCategory(c.id, c.name)} className="text-xs font-medium text-red-600 hover:underline">
+                          Delete
+                        </button>
+                      )}
+                    </span>
+                  </>
+                )}
               </li>
             ))}
             {(cats.data ?? []).length === 0 && (

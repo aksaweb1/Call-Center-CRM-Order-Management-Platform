@@ -16,6 +16,7 @@ import {
   AssignManyLeadsDto,
   AssignLeadDto,
   BulkImportLeadDto,
+  BulkLeadStatusDto,
   CreateLeadDto,
   UpdateLeadDto,
 } from './dto/lead.dto';
@@ -97,6 +98,12 @@ export class LeadsController {
   @RequirePermissions(Permissions.LEAD_ASSIGN)
   assignMany(@Body() dto: AssignManyLeadsDto, @CurrentUser() user: AuthUser) {
     return this.leadsService.assignMany(dto.leadIds, dto.agentId, user.id);
+  }
+
+  @Post('bulk-status')
+  @RequirePermissions(Permissions.LEAD_UPDATE)
+  bulkStatus(@Body() dto: BulkLeadStatusDto, @CurrentUser() user: AuthUser) {
+    return this.leadsService.bulkStatus(dto.leadIds, dto.status, user.id, user);
   }
 
   @Delete(':id')

@@ -12,7 +12,7 @@ import { FollowUpsService } from '../followups/followups.service';
 const callInclude = {
   lead: { select: { id: true, status: true } },
   customer: { select: { id: true, name: true, phone: true } },
-  agent: { select: { id: true, fullName: true, phone: true } },
+  agent: { select: { id: true, fullName: true, phone: true, callDevice: true, telephonyAccountId: true } },
   recording: true,
   events: { orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.CallInclude;
@@ -46,8 +46,25 @@ export class CallsService {
   async initiate(leadId: string, userId: string, from?: string) {
     const lead = await this.prisma.lead.findFirst({ where: { id: leadId, deletedAt: null }, include: { customer: true } });
     if (!lead || !lead.customer) throw new NotFoundException('Lead not found');
+    // Resolve the agent's preferred device — SUPER_ADMIN/ADMIN assign a real Tata account per-user
+    // from the fetched Smartflow list (stored as telephonyAccountId). That assignment is the
+    // single source of truth for real dialing — no more hardcoded env numbers.
+    const agent = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true, callDevice: true, telephonyAccountId: true },
+    });
+    // Priority: explicit caller override > CRM-assigned Tata account > device fallback
+    // NOTE: `agentPhone` is the number Smartflow rings to reach the agent (mobile or web extension).
+    // `caller_id` (from) must stay as the whitelisted DID (TATA_CALLER_ID) — never the agent's mobile.
+    const effectiveAgentPhone =
+      from ?? agent?.telephonyAccountId ?? (agent?.callDevice === 'WEB_DIALER' ? undefined : agent?.phone ?? undefined);
     const provider = this.telephonyFactory.getProvider();
-    const callResult = await provider.initiateCall({ to: lead.customer.phone, agentPhone: from, callbackUrl: provider.buildWebhookUrl(this.baseUrl()) });
+    const callResult = await provider.initiateCall({
+      to: lead.customer.phone,
+      agentPhone: effectiveAgentPhone,
+      // Do not set `from` — let TataProvider default to TATA_CALLER_ID (whitelisted DID)
+      callbackUrl: provider.buildWebhookUrl(this.baseUrl()),
+    });
     const recording = await this.prisma.callRecording.create({ data: {} });
     // Only one CALLING lead per agent — clear any other CALLING leads for this agent before marking this one
     await this.prisma.lead.updateMany({ where: { agentId: userId, status: 'CALLING', id: { not: lead.id }, deletedAt: null }, data: { status: 'ASSIGNED', lastActivityAt: new Date() } });
@@ -63,11 +80,18 @@ export class CallsService {
         status: 'INITIATED',
         dialedNumber: lead.customer.phone,
         recordingId: recording.id,
+        metadata: { callDevice: agent?.callDevice ?? 'MOBILE', agentPhone: effectiveAgentPhone ?? null },
       },
       include: callInclude,
     });
     await this.prisma.lead.update({ where: { id: lead.id }, data: { status: 'CALLING', firstCallMadeAt: new Date(), lastActivityAt: new Date() } });
-    await this.activityService.record({ userId, customerId: lead.customerId, leadId: lead.id, action: 'Call Started', metadata: { provider: provider.name, providerCallId: callResult.providerCallId } });
+    await this.activityService.record({
+      userId,
+      customerId: lead.customerId,
+      leadId: lead.id,
+      action: 'Call Started',
+      metadata: { provider: provider.name, providerCallId: callResult.providerCallId, callDevice: agent?.callDevice ?? 'MOBILE' },
+    });
     return call;
   }
 
@@ -240,13 +264,17 @@ export class CallsService {
   }
 
   async hangup(id: string, user: AuthUser) {
-    const call = await this.prisma.call.findFirst({ where: { id, deletedAt: null } });
+    // Accept a CRM call id OR a provider reference (live-call wallboards
+    // only have the provider's ref_id / call_id).
+    const call = await this.prisma.call.findFirst({
+      where: { deletedAt: null, OR: [{ id }, { providerCallId: id }, { callSid: id }] },
+    });
     if (!call) throw new NotFoundException('Call not found');
     this.assertCanActOnCall(user, call.agentId);
     const provider = this.telephonyFactory.getProvider();
     if (provider.hangup && call.providerCallId) { try { await provider.hangup(call.providerCallId); } catch {} }
-    const updated = await this.prisma.call.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() }, include: callInclude });
-    setTimeout(async () => { try { await this.findById(id); } catch {} }, 4000);
+    const updated = await this.prisma.call.update({ where: { id: call.id }, data: { status: 'COMPLETED', completedAt: new Date() }, include: callInclude });
+    setTimeout(async () => { try { await this.findById(call.id); } catch {} }, 4000);
     return updated;
   }
 

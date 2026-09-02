@@ -3,10 +3,12 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useApi } from '@/lib/hook';
+import { usePageTitle } from '@/lib/use-page-title';
 import { Customer, PageResult } from '@/lib/types';
-import { Spinner, EmptyState, Badge } from '@/components/ui';
+import { Spinner, EmptyState, Badge, TableSkeleton } from '@/components/ui';
 
 export default function CustomersPage() {
+  usePageTitle('Customers');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const qs = new URLSearchParams({ page: String(page), limit: '20' });
@@ -30,7 +32,7 @@ export default function CustomersPage() {
         />
       </div>
 
-      {loading && <Spinner />}
+      {loading && <TableSkeleton rows={6} cols={5} />}
       {error && <EmptyState title="Could not load customers" description={error} />}
 
       {!loading && !error && (
@@ -62,7 +64,9 @@ export default function CustomersPage() {
                         {c.name}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{c.phone}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      <a href={`tel:${c.phone}`} className="hover:text-emerald-600">{c.phone}</a>
+                    </td>
                     <td className="px-4 py-3 text-slate-600">{c.email ?? '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{c.city ?? '—'}</td>
                     <td className="px-4 py-3">

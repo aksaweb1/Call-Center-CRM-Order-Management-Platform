@@ -22,9 +22,17 @@ export default function OrderForm({
   const products = useApi<PageResult<Product>>('/products?limit=100');
   // Pricing is server-authoritative: only product + quantity are sent.
   const [items, setItems] = useState<Array<{ productId: string; quantity: number }>>([]);
+  const [productSearch, setProductSearch] = useState('');
   const [shipping, setShipping] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const filteredProducts = useMemo(() => {
+    const all = (products.data?.items ?? []).filter((p) => p.stock > 0);
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+  }, [products.data, productSearch]);
 
   const preview = useMemo(() => {
     if (!products.data) return null;
@@ -78,6 +86,14 @@ export default function OrderForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      {(products.data?.items ?? []).length > 8 && (
+        <input
+          value={productSearch}
+          onChange={(e) => setProductSearch(e.target.value)}
+          placeholder="Filter products by name or SKU…"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+      )}
       {items.length === 0 && <p className="text-xs text-slate-500">No products added yet.</p>}
       {items.map((item, index) => {
         const product = (products.data?.items ?? []).find((p) => p.id === item.productId);
@@ -92,13 +108,11 @@ export default function OrderForm({
                 className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
               >
                 <option value="">Select product…</option>
-                {(products.data?.items ?? [])
-                  .filter((p) => p.stock > 0)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} · ₹{p.price} · stock {p.stock}
-                    </option>
-                  ))}
+                {filteredProducts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · ₹{p.price} · stock {p.stock}
+                  </option>
+                ))}
               </select>
               <input
                 type="number"

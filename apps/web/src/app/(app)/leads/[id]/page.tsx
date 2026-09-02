@@ -5,10 +5,11 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/lib/hook';
 import { useAuth } from '@/lib/auth';
-import { Call, FollowUp, Lead, Order, PageResult, User } from '@/lib/types';
+import { Call, FollowUp, Lead, Note, Order, PageResult, User } from '@/lib/types';
 import { Badge, EmptyState, Spinner, formatCurrency, formatDate } from '@/components/ui';
 import OrderForm from '@/components/order-form';
 import { api } from '@/lib/client';
+import { usePageTitle } from '@/lib/use-page-title';
 import { useCall } from '@/components/call-context';
 
 const LEAD_STATUSES = [
@@ -33,10 +34,12 @@ export default function LeadDetailPage() {
   const canUpdateLead = user?.permissions?.includes('lead.update') ?? false;
   const canCreateOrder = user?.permissions?.includes('order.create') ?? false;
   const canAssign = user?.permissions?.includes('lead.assign') ?? false;
+  const canCreateNote = user?.permissions?.includes('note.create') ?? false;
 
   const lead = useApi<Lead>(id ? `/leads/${id}` : null);
   const calls = useApi<PageResult<Call>>(id ? `/calls?leadId=${id}&limit=20` : null);
   const followups = useApi<PageResult<FollowUp>>(id ? `/followups?leadId=${id}&limit=100` : null);
+  const notes = useApi<PageResult<Note>>(id ? `/notes?leadId=${id}&limit=20` : null);
   const agents = useApi<PageResult<User>>('/users?roleKey=AGENT&limit=100');
 
   const [busy, setBusy] = useState<'call' | 'status' | 'followup' | 'followup-toggle' | 'assign' | null>(null);
@@ -53,7 +56,11 @@ export default function LeadDetailPage() {
   const [historyLiveDur, setHistoryLiveDur] = useState<{ id: string; secs: number } | null>(null);
   const isBusyOnCall = !!activeCall && ['INITIATED', 'RINGING', 'CONNECTED'].includes(activeCall.status);
 
+  const [noteBody, setNoteBody] = useState('');
+  const [notePinned, setNotePinned] = useState(false);
+
   const l = lead.data;
+  usePageTitle(l ? `${l.customer?.name ?? 'Lead'} — ${l.status}` : 'Lead');
   const isOwnLead = !!l && (l.agent?.id === user?.id || user?.role === 'SUPER_ADMIN');
 
   const history = useMemo(() => {
@@ -101,9 +108,16 @@ export default function LeadDetailPage() {
         followUp: f,
       });
     }
+    for (const n of notes.data?.items ?? []) {
+      items.push({
+        at: n.createdAt,
+        text: `Note${n.pinned ? ' (pinned)' : ''}: ${n.body.slice(0, 160)}${n.body.length > 160 ? '…' : ''}`,
+        tone: n.pinned ? 'green' : 'amber',
+      });
+    }
     items.sort((a, b) => (a.at < b.at ? 1 : -1));
     return items;
-  }, [calls.data, followups.data]);
+  }, [calls.data, followups.data, notes.data]);
 
   function reloadCalls() {
     calls.setData(null);
@@ -117,6 +131,33 @@ export default function LeadDetailPage() {
     void api<PageResult<FollowUp>>(`/followups?leadId=${l?.id}&limit=100&_=${Date.now()}`)
       .then((d) => followups.setData(d))
       .catch(() => {});
+  }
+
+  function reloadNotes() {
+    notes.setData(null);
+    void api<PageResult<Note>>(`/notes?leadId=${l?.id}&limit=20&_=${Date.now()}`)
+      .then((d) => notes.setData(d))
+      .catch(() => {});
+  }
+
+  async function handleNoteSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!l || !noteBody.trim()) return;
+    setBusy('followup');
+    try {
+      await api('/notes', {
+        method: 'POST',
+        body: JSON.stringify({ body: noteBody.trim(), leadId: l.id, customerId: l.customerId, pinned: notePinned || undefined }),
+      });
+      setNoteBody('');
+      setNotePinned(false);
+      setMsg({ tone: 'ok', text: 'Note added.' });
+      reloadNotes();
+    } catch (err) {
+      setMsg({ tone: 'err', text: err instanceof Error ? err.message : 'Could not add note' });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function toggleFollowUpDone(f: FollowUp) {
@@ -421,15 +462,43 @@ export default function LeadDetailPage() {
             </dl>
           </div>
 
+          {canCreateNote && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Add a note</h2>
+              <form onSubmit={handleNoteSubmit} className="space-y-2">
+                <textarea
+                  value={noteBody}
+                  onChange={(e) => setNoteBody(e.target.value)}
+                  placeholder="Write a note about this lead…"
+                  rows={2}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <input type="checkbox" checked={notePinned} onChange={(e) => setNotePinned(e.target.checked)} className="h-3.5 w-3.5 rounded border-slate-300" />
+                    Pin this note
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={busy === 'followup' || !noteBody.trim()}
+                    className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+                  >
+                    {busy === 'followup' ? 'Saving…' : 'Add note'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           <div className="rounded-xl border border-slate-200 bg-white">
             <div className="border-b border-slate-100 px-4 py-3">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">History</h2>
             </div>
-            {calls.loading || followups.loading ? (
+            {calls.loading || followups.loading || notes.loading ? (
               <div className="p-4"><Spinner /></div>
             ) : history.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-slate-400">
-                No calls or follow-ups yet. Tap “Call now” to start.
+                No calls, follow-ups or notes yet. Tap “Call now” to start.
               </p>
             ) : (
               <ul className="divide-y divide-slate-100">
