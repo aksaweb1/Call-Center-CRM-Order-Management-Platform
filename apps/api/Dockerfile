@@ -10,9 +10,13 @@ RUN npm ci --include=optional
 
 # ── API build ──────────────────────────────────────────────────
 FROM base AS api-build
+WORKDIR /app
 COPY . .
+RUN mkdir -p apps/web/public
 RUN npm run prisma:generate --workspace apps/api
-RUN npm run build --workspace apps/api
+WORKDIR /app/apps/api
+RUN npx nest build
+RUN ls -la dist && echo "api dist at apps/api/dist OK" || echo "no dist at apps/api/dist"
 
 # ── API runtime ────────────────────────────────────────────────
 FROM node:20-alpine AS api
