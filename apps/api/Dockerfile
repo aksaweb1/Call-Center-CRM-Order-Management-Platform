@@ -14,9 +14,8 @@ WORKDIR /app
 COPY . .
 RUN mkdir -p apps/web/public
 RUN npm run prisma:generate --workspace apps/api
-WORKDIR /app/apps/api
-RUN npx nest build
-RUN ls -la dist && echo "api dist at apps/api/dist OK" || echo "no dist at apps/api/dist"
+RUN npm run build --workspace @callcenter/api
+RUN ls -la apps/api/dist/src/main.js && echo "api dist OK at apps/api/dist/src/main.js" || (echo "ls apps/api/dist:"; ls -la apps/api/dist; echo "ls dist:"; ls -la dist 2>/dev/null || echo "no /app/dist")
 
 # ── API runtime ────────────────────────────────────────────────
 FROM node:20-alpine AS api
