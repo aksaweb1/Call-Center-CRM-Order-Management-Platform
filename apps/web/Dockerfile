@@ -6,6 +6,7 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY apps/api/package.json ./apps/api/package.json
 RUN npm ci --include=optional
 COPY . .
+RUN mkdir -p apps/web/public
 ARG NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build --workspace @callcenter/web
