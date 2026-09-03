@@ -5,10 +5,10 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json ./apps/web/package.json
 COPY apps/api/package.json ./apps/api/package.json
 RUN npm ci --include=optional
+COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-WORKDIR /app/apps/web
-RUN npx next build
+RUN npm run build --workspace @callcenter/web
 
 # ── Runner stage ───────────────────────────────────────────────
 FROM node:20-alpine AS runner
