@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm install --ignore-scripts --omit=optional
+RUN npm ci --include=optional
 
 # ── API build ──────────────────────────────────────────────────
 FROM base AS api-build
