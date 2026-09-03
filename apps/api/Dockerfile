@@ -1,5 +1,6 @@
 # ── Base image ────────────────────────────────────────────────
 FROM node:20-alpine AS base
+RUN apk add --no-cache openssl libc6-compat
 WORKDIR /app
 # Use npm's workspaces: the whole repo is copied and both apps installed.
 COPY package.json package-lock.json ./
@@ -15,6 +16,7 @@ RUN npm run build --workspace apps/api
 
 # ── API runtime ────────────────────────────────────────────────
 FROM node:20-alpine AS api
+RUN apk add --no-cache openssl libc6-compat
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=api-build /app/node_modules ./node_modules
