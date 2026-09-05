@@ -71,7 +71,8 @@ const page = normalizePage(query.page);
     const user = await this.repository.updateUser(id, dto, passwordHash);
     // Deactivating an account must immediately kill its refresh sessions,
     // otherwise the user keeps minting access tokens until the token expires.
-    if (dto.isActive === false) {
+    // Same on password change — old sessions must not survive a reset.
+    if (dto.isActive === false || passwordHash) {
       await this.revokeRefreshTokens(id);
     }
     return user;

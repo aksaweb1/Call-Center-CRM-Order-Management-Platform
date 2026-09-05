@@ -59,6 +59,7 @@ export default function UsersPage() {
     phone: string;
     callDevice: 'MOBILE' | 'WEB_DIALER';
     telephonyAccountId: string;
+    password: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -94,6 +95,7 @@ export default function UsersPage() {
       phone: u.phone ?? '',
       callDevice: (u.callDevice as 'MOBILE' | 'WEB_DIALER') ?? 'MOBILE',
       telephonyAccountId: u.telephonyAccountId ?? '',
+      password: '',
     });
   }
 
@@ -138,6 +140,10 @@ export default function UsersPage() {
 
   async function handleSaveEdit() {
     if (!editingId || !editForm) return;
+    if (editForm.password && editForm.password.length > 0 && editForm.password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
     setSaving(true);
     setError('');
     setMessage('');
@@ -152,9 +158,10 @@ export default function UsersPage() {
           isActive: editForm.isActive,
           callDevice: editForm.callDevice,
           telephonyAccountId: editForm.telephonyAccountId || null,
+          ...(editForm.password ? { password: editForm.password } : {}),
         }),
       });
-      setMessage('Changes saved — calls for this user will now ring on the assigned account.');
+      setMessage(editForm.password ? 'Changes saved — password updated.' : 'Changes saved — calls for this user will now ring on the assigned account.');
       cancelEdit();
       users.reload();
     } catch (e) {
@@ -354,11 +361,24 @@ export default function UsersPage() {
                   <tr key={u.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
                       {editing ? (
-                        <input
-                          value={editForm?.fullName ?? ''}
-                          onChange={(e) => setEditForm((f) => (f ? { ...f, fullName: e.target.value } : f))}
-                          className="w-full max-w-[180px] rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                        />
+                        <div className="space-y-1">
+                          <input
+                            value={editForm?.fullName ?? ''}
+                            onChange={(e) => setEditForm((f) => (f ? { ...f, fullName: e.target.value } : f))}
+                            placeholder="Full name"
+                            className="w-full max-w-[180px] rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                          />
+                          {!isSuper && (
+                            <input
+                              type="password"
+                              value={editForm?.password ?? ''}
+                              onChange={(e) => setEditForm((f) => (f ? { ...f, password: e.target.value } : f))}
+                              placeholder="New password (leave blank = no change)"
+                              autoComplete="new-password"
+                              className="w-full max-w-[180px] rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-sm"
+                            />
+                          )}
+                        </div>
                       ) : (
                         <>
                           <p className="font-medium text-slate-900">{u.fullName}</p>

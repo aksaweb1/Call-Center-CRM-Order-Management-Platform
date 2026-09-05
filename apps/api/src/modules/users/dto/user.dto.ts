@@ -81,6 +81,11 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   telephonyAccountId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(8, 128)
+  password?: string;
 }
 
 export class SetUserPermissionsDto {
