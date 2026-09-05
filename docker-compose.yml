@@ -61,7 +61,7 @@ services:
       - "${API_PORT:-3000}:3000"
     command: >
       sh -c "npx prisma migrate deploy &&
-             node dist/main.js"
+             node dist/src/main.js"
 
   web:
     build:
