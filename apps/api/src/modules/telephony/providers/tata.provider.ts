@@ -96,14 +96,25 @@ export class TataProvider implements TelephonyProvider {
       this.logger.warn('TATA credentials missing — simulating call initiation');
       return { provider: this.name, providerCallId: `tata-sim-${Date.now()}`, status: 'initiated' };
     }
+    // Smartflow only accepts digits. Fail fast with a clear message instead
+    // of a cryptic provider 422 when the DID / agent number is missing.
+    const digits = (v?: string) => (v ?? '').replace(/\D/g, '');
+    const agentNumber = digits(input.agentPhone ?? this.agentNumber);
+    if (!agentNumber) {
+      throw new Error('TATA agent number is missing — assign a Tata account or mobile number to this user in Employees');
+    }
+    const callerId = digits(input.from ?? this.callerId);
+    if (!callerId) {
+      throw new Error('TATA_CALLER_ID is not set — add your whitelisted DID to .env (root) and rebuild');
+    }
     const customIdentifier = `crm-${Date.now()}`;
     const body: Record<string, unknown> = {
-      agent_number: input.agentPhone ?? this.agentNumber,
-      destination_number: input.to,
-      caller_id: input.from ?? this.callerId,
+      agent_number: agentNumber,
+      destination_number: digits(input.to),
+      caller_id: callerId,
       async: 1,
       call_timeout: 45,
-      custom_identifier: customIdentifier,
+      customIdentifier: customIdentifier,
     };
 
     const res = await fetch(this.resolveUrl('/click_to_call'), {
