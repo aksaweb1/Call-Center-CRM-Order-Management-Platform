@@ -89,8 +89,13 @@ export function getCookie(name: string): string | undefined {
   return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : undefined;
 }
 
-const baseCookieAttrs = () =>
-  process.env.NODE_ENV === 'production' ? 'path=/; samesite=lax; secure' : 'path=/; samesite=lax';
+// Secure cookies are silently dropped by browsers over plain HTTP (office
+// WiFi), so only send `secure` when the page itself is served over HTTPS.
+const baseCookieAttrs = () => {
+  const secure =
+    typeof window !== 'undefined' && window.location.protocol === 'https:';
+  return secure ? 'path=/; samesite=lax; secure' : 'path=/; samesite=lax';
+};
 
 /** Stores a value with an explicit lifetime in seconds. */
 export function setCookie(name: string, value: string, maxAgeSeconds: number): void {
