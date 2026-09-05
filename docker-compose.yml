@@ -77,6 +77,12 @@ services:
     command: >
       sh -c "npx prisma migrate deploy &&
              node dist/src/main.js"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   web:
     build:
